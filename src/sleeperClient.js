@@ -44,6 +44,16 @@ export function getNflState() {
   return sleeperFetch('/state/nfl');
 }
 
+/**
+ * Fetches a draft's own record — status, round settings, and
+ * slot_to_roster_id (which roster sits in which snake-draft slot).
+ * Not exposed as its own MCP tool; used internally by draft_status
+ * to compute pick order.
+ */
+export function getDraft(draftId) {
+  return sleeperFetch(`/draft/${draftId}`);
+}
+
 export function getDraftPicks(draftId) {
   return sleeperFetch(`/draft/${draftId}/picks`);
 }
