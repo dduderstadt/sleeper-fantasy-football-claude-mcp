@@ -46,17 +46,75 @@ const NFL_TEAM_NAMES = {
   WAS: 'Washington Commanders',
 };
 
+// Same set draft_status groups undrafted players by.
+const FANTASY_POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
+const FALLBACK_TOP_N_OVERALL = 100;
+const FALLBACK_TOP_N_PER_POSITION = 5;
+
+function playerName(p) {
+  return p.full_name || [p.first_name, p.last_name].filter(Boolean).join(' ') || null;
+}
+
+function toRankedEntry(playerId, p) {
+  return {
+    player_id: playerId,
+    name: playerName(p),
+    position: p.position,
+    team: p.team,
+    search_rank: p.search_rank ?? Infinity,
+  };
+}
+
+/**
+ * Derived automatically from the player database on every successful
+ * refresh — top players by Sleeper's own `search_rank` field overall, and
+ * per position. This is a rough search-relevance signal Sleeper assigns
+ * (lower = more prominent), not a curated fantasy ranking or ADP; every
+ * caller of getFallbackRankings() should label it as such. Used as a
+ * last-resort fallback (draft_status) when live picks/roster data can't be
+ * fetched — there's no manual file to keep up to date, since this is
+ * recomputed from the same data every ~24h refresh.
+ */
+function computeFallbackRankings(playersObj) {
+  const eligible = Object.entries(playersObj)
+    .filter(([, p]) => p.team && FANTASY_POSITIONS.includes(p.position))
+    .map(([playerId, p]) => toRankedEntry(playerId, p));
+
+  eligible.sort((a, b) => a.search_rank - b.search_rank);
+
+  const topByPosition = {};
+  for (const position of FANTASY_POSITIONS) {
+    topByPosition[position] = eligible
+      .filter((p) => p.position === position)
+      .slice(0, FALLBACK_TOP_N_PER_POSITION)
+      .map(({ player_id, name, team }) => ({ player_id, name, team }));
+  }
+
+  return {
+    top_100_overall: eligible.slice(0, FALLBACK_TOP_N_OVERALL).map(({ player_id, name, position, team }) => ({
+      player_id,
+      name,
+      position,
+      team,
+    })),
+    top_5_by_position: topByPosition,
+  };
+}
+
 let players = {};
+let fallbackRankings = { top_100_overall: [], top_5_by_position: {} };
 let readyPromise = null;
 
 async function refresh() {
   try {
     const fetched = await getPlayers();
     players = fetched;
+    fallbackRankings = computeFallbackRankings(players);
     console.log(`Player cache loaded: ${Object.keys(players).length} players`);
   } catch (error) {
     // Never let a failed refresh wipe out good data already in memory —
-    // keep serving whatever we last successfully loaded.
+    // keep serving whatever we last successfully loaded (players AND the
+    // fallback rankings derived from it).
     console.error('Player cache refresh failed, keeping previous data:', error);
   }
 }
@@ -139,4 +197,18 @@ export async function resolvePlayers(idOrIds) {
 export async function getCachedPlayers() {
   if (readyPromise) await readyPromise;
   return players;
+}
+
+/**
+ * Returns the current fallback ranking snapshot: { top_100_overall,
+ * top_5_by_position }, derived from Sleeper's search_rank field on the
+ * last successful player database refresh. Never fetches over the
+ * network. Empty arrays mean the player cache itself has never
+ * successfully loaded (e.g. first request racing a still-in-flight or
+ * failed initial fetch) — callers should treat that as "no fallback data
+ * available either," not as "zero players exist."
+ */
+export async function getFallbackRankings() {
+  if (readyPromise) await readyPromise;
+  return fallbackRankings;
 }

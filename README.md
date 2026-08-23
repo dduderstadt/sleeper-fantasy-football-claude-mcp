@@ -13,8 +13,8 @@ Working end to end over Streamable HTTP with bearer token auth, deployed to Rail
 ```
 src/
   config.js         # reads env vars once, exports a typed config object
-  sleeperClient.js   # thin wrapper around Sleeper's REST API
-  playerCache.js      # in-memory NFL player_id -> name/position/team lookup
+  sleeperClient.js   # thin wrapper around Sleeper's REST API; every call gets a timeout + clear error
+  playerCache.js      # in-memory NFL player_id -> name/position/team lookup + search_rank fallback rankings
   flexEligibility.js    # shared slot/flex-eligibility + assignment logic
   draftStatus.js       # draft_status: snake-order/trade math + player pool scan
   rosterNeeds.js         # roster_needs: starting-slot fill status via flexEligibility.js
@@ -117,6 +117,8 @@ A bundled, no-argument tool for live draft day (`src/draftStatus.js`) — combin
 
 Performance note: beyond the network calls (run in parallel), everything else — snake-order/trade-reconciliation math and the undrafted-player-by-position scan — is synchronous in-memory work over already-cached data (the player scan never hits Sleeper's API itself), so this stays fast under a live draft clock regardless of draft size.
 
+**Fallback mode:** if `get_league_settings`'s own call succeeds but the rosters/draft/picks/traded-picks batch fails (timeout, network error, non-2xx from Sleeper), `draft_status` doesn't throw — it returns `fallback_mode: true` instead, with `status`, `total_rounds`, `current_round`, `my_roster_id`, `my_next_pick_number`, `picks_so_far`, and `my_picks_so_far` all explicitly `null` (also listed in `unavailable_fields`, since none of them can be derived without live picks data — there's no way to know whose turn it is or who's been drafted otherwise), a `fallback_reason` with the underlying error, and `generally_strong_players_overall`/`generally_strong_players_by_position` — Sleeper's own `search_rank`-derived snapshot from `playerCache.js` (see [Error handling & graceful degradation](#error-handling--graceful-degradation) below). Named `generally_strong_players_*`, not `available_players_*`, since fallback mode has no idea what's actually been drafted. If `get_league_settings` itself fails, there's no `draft_id` to work with at all, so that's a hard tool error, not fallback mode.
+
 ### roster_needs
 
 A bundled, no-argument tool for in-season use (`src/rosterNeeds.js`) — checks your starting lineup's roster construction, scoped to `SLEEPER_LEAGUE_ID`/`SLEEPER_USER_ID`. Assigns your rostered players to your league's starting slots most-constrained-first (dedicated positions, then `FLEX`, then `SUPER_FLEX`, etc.), so a player is never double-counted against more than one slot — flex eligibility nests perfectly in standard fantasy football (dedicated ⊂ FLEX ⊂ SUPER_FLEX), which makes that ordering provably optimal, not just a heuristic. The assignment/eligibility logic lives in `src/flexEligibility.js`, factored out so other tools (e.g. a future update to `draft_status`) can reuse it rather than reimplementing flex reasoning.
@@ -128,6 +130,16 @@ Returns `slots`: an array in your league's declared `roster_positions` order (be
 - `player` — that slot's assigned player (`{ player_id, name, position, team, injury_status }`), or `null` if empty
 
 Plus a `summary` with `solid`/`questionable`/`empty` counts. This is about roster **construction** only — whether a slot has an eligible, healthy player at all — not a judgment about whether that player is any good; that's left to you.
+
+## Error handling & graceful degradation
+
+The goal: if something breaks mid-draft — Sleeper's API, your network, or Railway — you get a fast, honest signal about what's wrong, not a stuck tool call or a silent empty result.
+
+- **Every Sleeper call has a timeout.** `sleeperFetch()` in `src/sleeperClient.js` is the single chokepoint every tool goes through, so this applies everywhere: 10 seconds by default, 30 seconds for the ~5MB player database fetch. A hung connection fails loudly instead of hanging the tool call forever.
+- **Errors are differentiated, not generic.** A timeout, a network-level failure (DNS, connection refused), and a non-2xx HTTP response from Sleeper each produce a distinct, clear message (e.g. `"Sleeper API request to /league/<id> timed out after 10s"` vs `"Sleeper API network error fetching ...: fetch failed"` vs `"Sleeper API error fetching ...: 503 Service Unavailable"`). The MCP SDK turns a thrown error into a clean `isError: true` tool result automatically, so Claude sees the real message rather than a raw exception.
+- **Auth rejects clearly.** A missing or wrong bearer token always gets an explicit `401` with a JSON-RPC error body (`src/auth.js`) — never a silent empty result. If something's misconfigured client-side (e.g. on your phone), you get an obvious rejection instead of confusing silence.
+- **Fallback rankings, derived automatically — no file to maintain.** Every time `playerCache.js` successfully refreshes the player database (startup, then ~every 24h), it also computes a fallback ranking snapshot from that same data: the top 100 players overall by Sleeper's `search_rank`, plus the top 5 per position. A failed refresh never overwrites this with empty data — the last good snapshot keeps serving. Always labeled by `search_rank` explicitly wherever it's used (`draft_status`'s fallback mode currently), since it's Sleeper's own rough search-relevance signal, not a curated fantasy ranking.
+- **`draft_status` degrades field-by-field**, not all-or-nothing — see [above](#draft_status) for exactly which fields go `null` in fallback mode and why.
 
 ## Running locally
 

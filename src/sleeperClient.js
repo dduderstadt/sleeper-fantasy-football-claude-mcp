@@ -1,8 +1,31 @@
 const SLEEPER_API_BASE = 'https://api.sleeper.app/v1';
+const DEFAULT_TIMEOUT_MS = 10_000;
 
-async function sleeperFetch(path) {
+/**
+ * Every Sleeper call in this codebase goes through here, so every one of
+ * them gets the same treatment: a hard timeout (a hung connection would
+ * otherwise hang the calling tool indefinitely — MCP's SDK already turns a
+ * thrown Error into a clean isError tool result, but only once something
+ * actually throws), and a message that says clearly which of three things
+ * went wrong (timeout / network failure / non-2xx response) rather than a
+ * generic failure.
+ */
+async function sleeperFetch(path, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   const url = `${SLEEPER_API_BASE}${path}`;
-  const response = await fetch(url);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response;
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error(`Sleeper API request to ${path} timed out after ${timeoutMs / 1000}s`);
+    }
+    throw new Error(`Sleeper API network error fetching ${path}: ${error.message}`);
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     throw new Error(`Sleeper API error fetching ${path}: ${response.status} ${response.statusText}`);
@@ -69,7 +92,8 @@ export function getDraftTradedPicks(draftId) {
  * request — see playerCache.js.
  */
 export function getPlayers() {
-  return sleeperFetch('/players/nfl');
+  // Larger timeout: this is a ~5MB payload, unlike every other call here.
+  return sleeperFetch('/players/nfl', { timeoutMs: 30_000 });
 }
 
 export function getTrending(type, lookbackHours, limit) {
