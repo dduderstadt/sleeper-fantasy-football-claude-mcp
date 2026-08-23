@@ -6,6 +6,7 @@ import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js
 import { config } from './config.js';
 import { bearerAuth } from './auth.js';
 import { registerTools } from './tools.js';
+import { initPlayerCache } from './playerCache.js';
 
 function buildMcpServer() {
   const server = new McpServer({
@@ -23,6 +24,12 @@ function buildMcpServer() {
 // anything once this is on the public internet). The bearer token check
 // below is the real access control for this server.
 const app = createMcpExpressApp({ host: '0.0.0.0' });
+
+// Fired and not awaited: /health and the rest of the app must come up
+// immediately for Railway's health check, regardless of how long the
+// ~5MB player database takes to fetch. Tools that need it await
+// resolvePlayers(), which itself awaits this same initial load.
+initPlayerCache();
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });

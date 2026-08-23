@@ -52,6 +52,16 @@ export function getDraftTradedPicks(draftId) {
   return sleeperFetch(`/draft/${draftId}/traded_picks`);
 }
 
+/**
+ * Fetches Sleeper's full NFL player database, keyed by player_id. This is a
+ * large (~5MB) payload; Sleeper asks that it not be polled more than once a
+ * day, so callers should cache the result rather than calling this per
+ * request — see playerCache.js.
+ */
+export function getPlayers() {
+  return sleeperFetch('/players/nfl');
+}
+
 export function getTrending(type, lookbackHours, limit) {
   const params = new URLSearchParams();
   if (lookbackHours !== undefined) params.set('lookback_hours', String(lookbackHours));

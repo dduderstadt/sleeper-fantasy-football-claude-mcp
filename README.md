@@ -14,6 +14,7 @@ Working end to end over Streamable HTTP with bearer token auth, deployed to Rail
 src/
   config.js         # reads env vars once, exports a typed config object
   sleeperClient.js   # thin wrapper around Sleeper's REST API
+  playerCache.js      # in-memory NFL player_id -> name/position/team lookup
   auth.js            # bearer token middleware
   tools.js           # MCP tool definitions (registered against an McpServer)
   server.js          # express app: /health, /mcp, auth wiring, listen()
@@ -77,17 +78,25 @@ All tools are scoped to the league configured via `SLEEPER_LEAGUE_ID` — none t
 | Tool | Sleeper endpoint | Arguments |
 |---|---|---|
 | `get_league_settings` | `GET /league/<league_id>` | — |
-| `get_rosters` | `GET /league/<league_id>/rosters` | — |
+| `get_rosters` | `GET /league/<league_id>/rosters` | `resolve_players` (boolean, optional) |
 | `get_league_users` | `GET /league/<league_id>/users` | — |
-| `get_matchups` | `GET /league/<league_id>/matchups/<week>` | `week` (number) |
-| `get_transactions` | `GET /league/<league_id>/transactions/<round>` | `round` (number — week in a standard league, round in best ball) |
+| `get_matchups` | `GET /league/<league_id>/matchups/<week>` | `week` (number), `resolve_players` (boolean, optional) |
+| `get_transactions` | `GET /league/<league_id>/transactions/<round>` | `round` (number — week in a standard league, round in best ball), `resolve_players` (boolean, optional) |
 | `get_traded_picks` | `GET /league/<league_id>/traded_picks` | — |
 | `get_nfl_state` | `GET /state/nfl` | — |
-| `get_draft_picks` | `GET /draft/<draft_id>/picks` | `draft_id` (string — get it from `get_league_settings` first) |
+| `get_draft_picks` | `GET /draft/<draft_id>/picks` | `draft_id` (string — get it from `get_league_settings` first), `resolve_players` (boolean, optional) |
 | `get_draft_traded_picks` | `GET /draft/<draft_id>/traded_picks` | `draft_id` (string — get it from `get_league_settings` first) |
-| `get_trending` | `GET /players/nfl/trending/<type>` | `type` (`"add"` or `"drop"`), `lookback_hours` (number, optional), `limit` (number, optional) |
+| `get_trending` | `GET /players/nfl/trending/<type>` | `type` (`"add"` or `"drop"`), `lookback_hours` (number, optional), `limit` (number, optional), `resolve_players` (boolean, optional) |
 
 `draft_id` is never configured statically — Sleeper issues a new one each season, so call `get_league_settings` first and pass its `draft_id` into the draft-scoped tools.
+
+### Resolving player_ids
+
+Sleeper's raw API returns players as bare `player_id` strings (in `players`/`starters`/`reserve`/`taxi` arrays, `adds`/`drops` objects, or a pick's `player_id`) — not human-readable names. Passing `resolve_players: true` to `get_rosters`, `get_matchups`, `get_transactions`, `get_draft_picks`, or `get_trending` adds sibling `*_resolved` field(s) with `{ player_id, name, position, team }` for each one, alongside the untouched raw IDs. It defaults to `false` (raw pass-through) since not every caller needs it.
+
+The lookup is served from an in-memory copy of Sleeper's full player database (`GET /players/nfl`, ~5MB), fetched once at server startup and refreshed roughly every 24 hours in the background for the life of the process (`src/playerCache.js`) — per-request calls to that endpoint aren't made, in line with Sleeper's guidance not to poll it more than once a day. The startup fetch doesn't block the server from listening, so `/health` and the rest of `/mcp` come up immediately regardless of how long it takes; a tool call needing resolution simply awaits the in-flight load if it hasn't finished yet. If a refresh ever fails, the server logs it and keeps serving the last good data — it never crashes or clears the cache over a bad fetch.
+
+Two Sleeper quirks are handled explicitly: a team defense in `players`/`starters` is a team code (e.g. `"DET"`) rather than a numeric ID, resolved to `{ name: "Detroit Lions", position: "DEF", team: "DET" }`; and `"0"` is Sleeper's placeholder for an empty roster slot, resolved to `{ name: "Empty slot", position: null, team: null }` rather than an unknown-player lookup.
 
 ## Running locally
 
