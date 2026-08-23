@@ -15,7 +15,9 @@ src/
   config.js         # reads env vars once, exports a typed config object
   sleeperClient.js   # thin wrapper around Sleeper's REST API
   playerCache.js      # in-memory NFL player_id -> name/position/team lookup
+  flexEligibility.js    # shared slot/flex-eligibility + assignment logic
   draftStatus.js       # draft_status: snake-order/trade math + player pool scan
+  rosterNeeds.js         # roster_needs: starting-slot fill status via flexEligibility.js
   auth.js            # bearer token middleware
   tools.js           # MCP tool definitions (registered against an McpServer)
   server.js          # express app: /health, /mcp, auth wiring, listen()
@@ -89,6 +91,7 @@ All tools are scoped to the league configured via `SLEEPER_LEAGUE_ID` — none t
 | `get_draft_traded_picks` | `GET /draft/<draft_id>/traded_picks` | `draft_id` (string — get it from `get_league_settings` first) |
 | `get_trending` | `GET /players/nfl/trending/<type>` | `type` (`"add"` or `"drop"`), `lookback_hours` (number, optional), `limit` (number, optional), `resolve_players` (boolean, optional), `exclude_rostered` (boolean, optional) |
 | `draft_status` | *(bundled — see below)* | — |
+| `roster_needs` | *(bundled — see below)* | — |
 
 `draft_id` is never configured statically — Sleeper issues a new one each season, so call `get_league_settings` first and pass its `draft_id` into the draft-scoped tools.
 
@@ -113,6 +116,18 @@ A bundled, no-argument tool for live draft day (`src/draftStatus.js`) — combin
 - `remaining_players_by_position` — per position, a `count` of undrafted players plus `search_rank_reference`: the top 5 by Sleeper's own `search_rank` field. That field is a general search-relevance number Sleeper assigns (lower = more prominent), **not** a curated fantasy ranking or ADP — treat it as a rough reference only, not draft advice.
 
 Performance note: beyond the network calls (run in parallel), everything else — snake-order/trade-reconciliation math and the undrafted-player-by-position scan — is synchronous in-memory work over already-cached data (the player scan never hits Sleeper's API itself), so this stays fast under a live draft clock regardless of draft size.
+
+### roster_needs
+
+A bundled, no-argument tool for in-season use (`src/rosterNeeds.js`) — checks your starting lineup's roster construction, scoped to `SLEEPER_LEAGUE_ID`/`SLEEPER_USER_ID`. Assigns your rostered players to your league's starting slots most-constrained-first (dedicated positions, then `FLEX`, then `SUPER_FLEX`, etc.), so a player is never double-counted against more than one slot — flex eligibility nests perfectly in standard fantasy football (dedicated ⊂ FLEX ⊂ SUPER_FLEX), which makes that ordering provably optimal, not just a heuristic. The assignment/eligibility logic lives in `src/flexEligibility.js`, factored out so other tools (e.g. a future update to `draft_status`) can reuse it rather than reimplementing flex reasoning.
+
+Returns `slots`: an array in your league's declared `roster_positions` order (bench/IR/taxi excluded), each with:
+
+- `slot` — the slot type (`QB`, `RB`, `FLEX`, `SUPER_FLEX`, etc.)
+- `fill_status` — `"solid"` (filled, no injury flag), `"questionable"` (filled, but that player has a non-null Sleeper `injury_status`), or `"empty"` (no eligible rostered player left to fill it — a genuine roster gap)
+- `player` — that slot's assigned player (`{ player_id, name, position, team, injury_status }`), or `null` if empty
+
+Plus a `summary` with `solid`/`questionable`/`empty` counts. This is about roster **construction** only — whether a slot has an eligible, healthy player at all — not a judgment about whether that player is any good; that's left to you.
 
 ## Running locally
 
@@ -166,7 +181,7 @@ This server uses the **Streamable HTTP** transport (a single `/mcp` endpoint, no
 - Read-only — this cannot modify anything in your Sleeper league.
 - Single league per deployment (`SLEEPER_LEAGUE_ID` is one value in config, not a tool argument).
 - Stateless request handling — each MCP request spins up its own transport, so there's no server-side session state to lose on a Railway restart, but also no resumable streaming across requests.
-- Most tools are raw pass-throughs of Sleeper's API (aside from `get_league_settings`'s light field selection); `draft_status` is the one bundled/derived tool so far — see [above](#draft_status).
+- Most tools are raw pass-throughs of Sleeper's API (aside from `get_league_settings`'s light field selection); `draft_status` and `roster_needs` are the bundled/derived tools so far — see [above](#draft_status).
 - No fantasy rankings/ADP/projections anywhere — Sleeper's raw API doesn't provide them, and `draft_status`'s `search_rank_reference` is explicitly a rough proxy (Sleeper's own search-relevance field), not draft advice. Real rankings would need a separate data source and aren't integrated.
 
 ## License
