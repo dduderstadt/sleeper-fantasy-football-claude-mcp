@@ -12,6 +12,7 @@ import {
   getTrending,
 } from './sleeperClient.js';
 import { resolvePlayers } from './playerCache.js';
+import { getDraftStatus } from './draftStatus.js';
 
 function jsonResult(data) {
   return {
@@ -45,7 +46,7 @@ async function attachResolvedPlayerArrays(obj, fields) {
  * `leagueId` is injected from config rather than exposed as a tool
  * argument, since this server is scoped to a single league.
  */
-export function registerTools(server, { leagueId }) {
+export function registerTools(server, { leagueId, sleeperUserId }) {
   server.registerTool(
     'get_league_settings',
     {
@@ -223,24 +224,68 @@ export function registerTools(server, { leagueId }) {
       title: 'Get Trending Players',
       description:
         'Fetches trending NFL players being added or dropped across Sleeper (raw Sleeper API response). ' +
-        'Optionally resolves each entry\'s player_id to name/position/team.',
+        "Optionally resolves each entry's player_id to name/position/team/injury/experience, and flags " +
+        'whether the player is already rostered in the configured league (a potential trade target rather ' +
+        'than a free agent). Optionally excludes already-rostered players entirely instead.',
       inputSchema: {
         type: z.enum(['add', 'drop']).describe('Whether to fetch trending adds or drops'),
         lookback_hours: z.number().int().positive().optional().describe('Hours to look back (Sleeper default: 24)'),
         limit: z.number().int().positive().optional().describe('Max number of players to return (Sleeper default: 25)'),
         resolve_players: resolvePlayersSchema,
+        exclude_rostered: z
+          .boolean()
+          .optional()
+          .describe(
+            'If true, drop trending players already rostered by any team in the configured league, leaving only free agents. Default false.'
+          ),
       },
     },
-    async ({ type, lookback_hours, limit, resolve_players }) => {
-      const trending = await getTrending(type, lookback_hours, limit);
+    async ({ type, lookback_hours, limit, resolve_players, exclude_rostered }) => {
+      let trending = await getTrending(type, lookback_hours, limit);
+
+      let rosteredBy = null;
+      if (resolve_players || exclude_rostered) {
+        const rosters = await getRosters(leagueId);
+        rosteredBy = new Map();
+        for (const roster of rosters) {
+          for (const playerId of roster.players ?? []) {
+            rosteredBy.set(playerId, { roster_id: roster.roster_id, owner_id: roster.owner_id });
+          }
+        }
+      }
+
+      if (exclude_rostered) {
+        trending = trending.filter((entry) => !rosteredBy.has(entry.player_id));
+      }
+
       if (resolve_players) {
         const ids = trending.map((entry) => entry.player_id);
         const resolved = await resolvePlayers(ids);
         trending.forEach((entry, i) => {
-          entry.player_resolved = resolved[i];
+          const owner = rosteredBy.get(entry.player_id) ?? null;
+          entry.player_resolved = { ...resolved[i], rostered: owner !== null, rostered_by: owner };
         });
       }
+
       return jsonResult(trending);
     }
+  );
+
+  server.registerTool(
+    'draft_status',
+    {
+      title: 'Draft Status',
+      description:
+        'Live draft-day snapshot for the configured league and user, combining league settings, roster ' +
+        'ownership, the draft object, picks made, and traded picks into one call (accounts for traded ' +
+        'draft picks when determining who picks next). Returns: current_round; my_next_pick_number (the ' +
+        "overall pick number you pick next in snake order — your CURRENT pick number if you're on the " +
+        'clock right now, not the one after); picks_so_far (every pick made in the draft so far, with ' +
+        "resolved player name/position/team); my_picks_so_far (just your own picks, same shape); and " +
+        'remaining_players_by_position (count of undrafted players per position, plus each position\'s ' +
+        "top 5 by Sleeper's own internal relevance ranking — not a real fantasy ADP/projection, just the " +
+        'closest signal available from Sleeper\'s raw player data).',
+    },
+    async () => jsonResult(await getDraftStatus({ leagueId, sleeperUserId }))
   );
 }

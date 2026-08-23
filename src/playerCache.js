@@ -82,24 +82,35 @@ function resolveOne(rawPlayerId) {
   // fail the "0" check and the players[id] lookup otherwise.
   const playerId = String(rawPlayerId);
 
+  const empty = { status: null, injury_status: null, years_exp: null, fantasy_positions: null };
+
   if (playerId === EMPTY_SLOT_ID) {
-    return { player_id: playerId, name: 'Empty slot', position: null, team: null };
+    return { player_id: playerId, name: 'Empty slot', position: null, team: null, ...empty };
   }
 
   const p = players[playerId];
   if (p) {
     const name = p.full_name || [p.first_name, p.last_name].filter(Boolean).join(' ') || null;
-    return { player_id: playerId, name, position: p.position ?? null, team: p.team ?? null };
+    return {
+      player_id: playerId,
+      name,
+      position: p.position ?? null,
+      team: p.team ?? null,
+      status: p.status ?? null,
+      injury_status: p.injury_status ?? null,
+      years_exp: p.years_exp ?? null,
+      fantasy_positions: p.fantasy_positions ?? null,
+    };
   }
 
   // Not a real numeric player_id and not found in the cache — check
   // whether it's a team defense code (e.g. "DET") before giving up.
   const teamName = NFL_TEAM_NAMES[playerId];
   if (teamName) {
-    return { player_id: playerId, name: teamName, position: 'DEF', team: playerId };
+    return { player_id: playerId, name: teamName, position: 'DEF', team: playerId, ...empty, fantasy_positions: ['DEF'] };
   }
 
-  return { player_id: playerId, name: null, position: null, team: null };
+  return { player_id: playerId, name: null, position: null, team: null, ...empty };
 }
 
 /**
@@ -116,4 +127,16 @@ export async function resolvePlayers(idOrIds) {
     return idOrIds.map(resolveOne);
   }
   return resolveOne(idOrIds);
+}
+
+/**
+ * Returns the raw in-memory player cache (player_id -> Sleeper player
+ * object), awaiting the initial load if needed. For callers that need to
+ * scan/count across the whole player pool (e.g. counting undrafted players
+ * per position) — never fetches over the network itself, so it's safe to
+ * call as often as needed without touching Sleeper's once-a-day guidance.
+ */
+export async function getCachedPlayers() {
+  if (readyPromise) await readyPromise;
+  return players;
 }

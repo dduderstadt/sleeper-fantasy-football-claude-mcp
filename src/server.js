@@ -14,7 +14,7 @@ function buildMcpServer() {
     version: '1.0.0',
   });
 
-  registerTools(server, { leagueId: config.sleeperLeagueId });
+  registerTools(server, { leagueId: config.sleeperLeagueId, sleeperUserId: config.sleeperUserId });
 
   return server;
 }
