@@ -6,7 +6,7 @@ Sleeper's API (`https://api.sleeper.app/v1/`, [docs](https://docs.sleeper.com/))
 
 ## Status
 
-This is the initial scaffold: one tool, `get_league_settings`, working end to end over Streamable HTTP with bearer token auth. More tools (rosters, matchups, draft picks, etc.) will follow the same pattern in `src/tools.js`.
+Working end to end over Streamable HTTP with bearer token auth, deployed to Railway, and verified through both curl and Claude's custom connector (desktop and mobile). All tools so far are thin, direct pass-throughs of Sleeper's raw API responses — no reshaping, filtering, or bundled/derived logic yet (e.g. a live "draft board + available players" tool). See [Available tools](#available-tools).
 
 ## Project structure
 
@@ -68,6 +68,27 @@ Missing or incorrect tokens get a `401` before any MCP or Sleeper logic runs (`s
 
 `/health` is intentionally unauthenticated (just a liveness check with no league data) so Railway's health checks can hit it freely.
 
+`/mcp` also has CORS enabled (wide-open origin) so browser-based clients — e.g. claude.ai's own custom connector setup, which validates/connects from the browser rather than server-side — can complete the preflight `OPTIONS` request before the real one carries the bearer token. CORS is not access control here; the bearer token is.
+
+## Available tools
+
+All tools are scoped to the league configured via `SLEEPER_LEAGUE_ID` — none take a league ID as an argument. Each is a thin, direct pass-through of Sleeper's raw JSON response for the corresponding endpoint (see [Sleeper's API docs](https://docs.sleeper.com/)) — no reshaping applied, except `get_league_settings`, which narrows the response to the fields most relevant for draft/season prep.
+
+| Tool | Sleeper endpoint | Arguments |
+|---|---|---|
+| `get_league_settings` | `GET /league/<league_id>` | — |
+| `get_rosters` | `GET /league/<league_id>/rosters` | — |
+| `get_league_users` | `GET /league/<league_id>/users` | — |
+| `get_matchups` | `GET /league/<league_id>/matchups/<week>` | `week` (number) |
+| `get_transactions` | `GET /league/<league_id>/transactions/<round>` | `round` (number — week in a standard league, round in best ball) |
+| `get_traded_picks` | `GET /league/<league_id>/traded_picks` | — |
+| `get_nfl_state` | `GET /state/nfl` | — |
+| `get_draft_picks` | `GET /draft/<draft_id>/picks` | `draft_id` (string — get it from `get_league_settings` first) |
+| `get_draft_traded_picks` | `GET /draft/<draft_id>/traded_picks` | `draft_id` (string — get it from `get_league_settings` first) |
+| `get_trending` | `GET /players/nfl/trending/<type>` | `type` (`"add"` or `"drop"`), `lookback_hours` (number, optional), `limit` (number, optional) |
+
+`draft_id` is never configured statically — Sleeper issues a new one each season, so call `get_league_settings` first and pass its `draft_id` into the draft-scoped tools.
+
 ## Running locally
 
 ```bash
@@ -120,7 +141,7 @@ This server uses the **Streamable HTTP** transport (a single `/mcp` endpoint, no
 - Read-only — this cannot modify anything in your Sleeper league.
 - Single league per deployment (`SLEEPER_LEAGUE_ID` is one value in config, not a tool argument).
 - Stateless request handling — each MCP request spins up its own transport, so there's no server-side session state to lose on a Railway restart, but also no resumable streaming across requests.
-- Only `get_league_settings` is implemented so far.
+- All tools are raw pass-throughs of Sleeper's API (aside from `get_league_settings`'s light field selection) — no bundled/derived tools yet (e.g. "draft board + available players + my roster needs" in one call).
 
 ## License
 
