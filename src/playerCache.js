@@ -1,0 +1,119 @@
+import { getPlayers } from './sleeperClient.js';
+
+// Sleeper asks that /players/nfl not be polled more than once a day.
+const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+// Sleeper's placeholder for an empty starter slot — not a real player_id.
+const EMPTY_SLOT_ID = '0';
+
+// Team defenses are drafted/started as a unit, so players/starters arrays
+// carry the team code itself (e.g. "DET") instead of a numeric player_id.
+// Sleeper's /players/nfl payload does include a DEF entry per team, but
+// this map lets resolveOne() give a sensible name even if that entry is
+// ever missing/stale in the cache.
+const NFL_TEAM_NAMES = {
+  ARI: 'Arizona Cardinals',
+  ATL: 'Atlanta Falcons',
+  BAL: 'Baltimore Ravens',
+  BUF: 'Buffalo Bills',
+  CAR: 'Carolina Panthers',
+  CHI: 'Chicago Bears',
+  CIN: 'Cincinnati Bengals',
+  CLE: 'Cleveland Browns',
+  DAL: 'Dallas Cowboys',
+  DEN: 'Denver Broncos',
+  DET: 'Detroit Lions',
+  GB: 'Green Bay Packers',
+  HOU: 'Houston Texans',
+  IND: 'Indianapolis Colts',
+  JAX: 'Jacksonville Jaguars',
+  KC: 'Kansas City Chiefs',
+  LAC: 'Los Angeles Chargers',
+  LAR: 'Los Angeles Rams',
+  LV: 'Las Vegas Raiders',
+  MIA: 'Miami Dolphins',
+  MIN: 'Minnesota Vikings',
+  NE: 'New England Patriots',
+  NO: 'New Orleans Saints',
+  NYG: 'New York Giants',
+  NYJ: 'New York Jets',
+  PHI: 'Philadelphia Eagles',
+  PIT: 'Pittsburgh Steelers',
+  SEA: 'Seattle Seahawks',
+  SF: 'San Francisco 49ers',
+  TB: 'Tampa Bay Buccaneers',
+  TEN: 'Tennessee Titans',
+  WAS: 'Washington Commanders',
+};
+
+let players = {};
+let readyPromise = null;
+
+async function refresh() {
+  try {
+    const fetched = await getPlayers();
+    players = fetched;
+    console.log(`Player cache loaded: ${Object.keys(players).length} players`);
+  } catch (error) {
+    // Never let a failed refresh wipe out good data already in memory —
+    // keep serving whatever we last successfully loaded.
+    console.error('Player cache refresh failed, keeping previous data:', error);
+  }
+}
+
+/**
+ * Kicks off the initial player database fetch and schedules a refresh
+ * roughly once every 24 hours for the life of the process. Call once at
+ * server startup. Does not block the caller — app.listen()/`/health`
+ * should come up immediately regardless of how long this fetch takes;
+ * tools that need player data await `resolvePlayers` instead, which
+ * waits on this same initial load.
+ */
+export function initPlayerCache() {
+  readyPromise = refresh();
+  setInterval(refresh, REFRESH_INTERVAL_MS).unref();
+  return readyPromise;
+}
+
+function resolveOne(rawPlayerId) {
+  // Sleeper's IDs are strings everywhere (player_id, team defense codes,
+  // the "0" empty-slot sentinel). Normalize explicitly rather than assume
+  // the caller already has a string — a stray number here would silently
+  // fail the "0" check and the players[id] lookup otherwise.
+  const playerId = String(rawPlayerId);
+
+  if (playerId === EMPTY_SLOT_ID) {
+    return { player_id: playerId, name: 'Empty slot', position: null, team: null };
+  }
+
+  const p = players[playerId];
+  if (p) {
+    const name = p.full_name || [p.first_name, p.last_name].filter(Boolean).join(' ') || null;
+    return { player_id: playerId, name, position: p.position ?? null, team: p.team ?? null };
+  }
+
+  // Not a real numeric player_id and not found in the cache — check
+  // whether it's a team defense code (e.g. "DET") before giving up.
+  const teamName = NFL_TEAM_NAMES[playerId];
+  if (teamName) {
+    return { player_id: playerId, name: teamName, position: 'DEF', team: playerId };
+  }
+
+  return { player_id: playerId, name: null, position: null, team: null };
+}
+
+/**
+ * Resolves a player_id, or an array of player_ids, to readable info
+ * (name, position, team) from the in-memory player cache. Awaits the
+ * initial load if it hasn't finished yet. Unknown IDs resolve to nulls
+ * rather than throwing, since Sleeper data can reference retired/invalid
+ * IDs (e.g. an empty roster slot).
+ */
+export async function resolvePlayers(idOrIds) {
+  if (readyPromise) await readyPromise;
+
+  if (Array.isArray(idOrIds)) {
+    return idOrIds.map(resolveOne);
+  }
+  return resolveOne(idOrIds);
+}
