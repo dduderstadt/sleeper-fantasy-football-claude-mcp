@@ -1,8 +1,21 @@
 import { getLeague, getRosters, getDraft, getDraftPicks, getDraftTradedPicks } from './sleeperClient.js';
-import { resolvePlayers, getCachedPlayers } from './playerCache.js';
+import { resolvePlayers, getCachedPlayers, getFallbackRankings } from './playerCache.js';
 
 const FANTASY_POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
 const TOP_N_PER_POSITION = 5;
+
+// Fields that fundamentally require live picks/roster data — there's no
+// way to derive them from the search_rank-based fallback set, since that
+// set has no idea what's actually been drafted or who owns which roster.
+const FIELDS_UNAVAILABLE_IN_FALLBACK = [
+  'status',
+  'total_rounds',
+  'current_round',
+  'my_roster_id',
+  'my_next_pick_number',
+  'picks_so_far',
+  'my_picks_so_far',
+];
 
 /**
  * Effective current owner of the pick at (round, originalRosterId), after
@@ -57,6 +70,85 @@ function playerName(p) {
 }
 
 /**
+ * Computes remaining_players_by_position from the live picks list and the
+ * cached player database. Returns null (with the caller expected to note
+ * why) if the player cache itself has never successfully loaded — an
+ * independent failure mode from the live picks/roster data this file
+ * otherwise depends on.
+ */
+async function computeRemainingPlayersByPosition(allDraftedPlayerIds) {
+  const players = await getCachedPlayers();
+  if (Object.keys(players).length === 0) return null;
+
+  const draftedPlayerIds = new Set(allDraftedPlayerIds);
+  const byPosition = {};
+  for (const position of FANTASY_POSITIONS) byPosition[position] = [];
+
+  for (const [playerId, p] of Object.entries(players)) {
+    if (draftedPlayerIds.has(playerId)) continue;
+    if (!p.team) continue;
+    if (!FANTASY_POSITIONS.includes(p.position)) continue;
+    byPosition[p.position].push({
+      player_id: playerId,
+      name: playerName(p),
+      team: p.team,
+      search_rank: p.search_rank ?? Infinity,
+    });
+  }
+
+  const remainingPlayersByPosition = {};
+  for (const position of FANTASY_POSITIONS) {
+    const list = byPosition[position];
+    list.sort((a, b) => a.search_rank - b.search_rank);
+    remainingPlayersByPosition[position] = {
+      count: list.length,
+      // Sleeper's search_rank is a general search-relevance field (lower =
+      // more prominent in Sleeper's own search/UI), not a curated fantasy
+      // ranking or ADP — named explicitly so callers don't mistake this
+      // for "best available."
+      search_rank_reference: list.slice(0, TOP_N_PER_POSITION).map(({ player_id, name, team }) => ({
+        player_id,
+        name,
+        team,
+      })),
+    };
+  }
+  return remainingPlayersByPosition;
+}
+
+/**
+ * Built when live picks/roster/draft data can't be fetched from Sleeper.
+ * Falls back to the search_rank-based snapshot playerCache.js maintains —
+ * which has no idea what's actually been drafted, so this is presented as
+ * "generally strong players," never "available players." Every field that
+ * genuinely can't be derived without live picks data is explicitly null
+ * and listed in `unavailable_fields`, rather than silently omitted.
+ */
+async function buildFallbackResponse({ draftId, reason }) {
+  const fallback = await getFallbackRankings();
+  const hasFallbackData = fallback.top_100_overall.length > 0;
+
+  return {
+    draft_id: draftId,
+    status: null,
+    total_rounds: null,
+    current_round: null,
+    my_roster_id: null,
+    my_next_pick_number: null,
+    picks_so_far: null,
+    my_picks_so_far: null,
+    fallback_mode: true,
+    fallback_reason: reason,
+    unavailable_fields: FIELDS_UNAVAILABLE_IN_FALLBACK,
+    note: hasFallbackData
+      ? "Live draft/roster data from Sleeper is unavailable right now, so the fields above are unset — there's no way to know current_round, whose turn it is, or who's actually been drafted without it. Below are Sleeper's own generally-strong players by search_rank (a rough relevance signal, not a curated fantasy ranking), NOT a list of players still available in your draft."
+      : "Live draft/roster data AND the local player database are both unavailable right now — Sleeper's API appears to be unreachable entirely, so there is no fallback data to offer either.",
+    generally_strong_players_overall: fallback.top_100_overall,
+    generally_strong_players_by_position: fallback.top_5_by_position,
+  };
+}
+
+/**
  * Computes the full draft_status payload for the configured league/user.
  * Performance note: aside from the network calls (league, rosters, draft,
  * picks, traded picks — small/medium JSON, run in parallel), everything
@@ -64,17 +156,29 @@ function playerName(p) {
  * over the already-cached player database — so this stays fast under a
  * live draft clock regardless of draft size. It never re-fetches the
  * player database itself; that's playerCache.js's job on its own schedule.
+ *
+ * Graceful degradation: getLeague() failing is unrecoverable (no draft_id,
+ * nothing else can be computed) and propagates as a normal tool error —
+ * see sleeperClient.js for the timeout/network/HTTP-status error messages
+ * that produces. If the rosters/draft/picks/traded-picks batch fails,
+ * this falls back to a search_rank-based snapshot instead of throwing —
+ * see buildFallbackResponse().
  */
 export async function getDraftStatus({ leagueId, sleeperUserId }) {
   const league = await getLeague(leagueId);
   const draftId = league.draft_id;
 
-  const [rosters, draft, picks, tradedPicks] = await Promise.all([
-    getRosters(leagueId),
-    getDraft(draftId),
-    getDraftPicks(draftId),
-    getDraftTradedPicks(draftId),
-  ]);
+  let rosters, draft, picks, tradedPicks;
+  try {
+    [rosters, draft, picks, tradedPicks] = await Promise.all([
+      getRosters(leagueId),
+      getDraft(draftId),
+      getDraftPicks(draftId),
+      getDraftTradedPicks(draftId),
+    ]);
+  } catch (error) {
+    return buildFallbackResponse({ draftId, reason: error.message });
+  }
 
   const myRoster = rosters.find((r) => r.owner_id === sleeperUserId);
   if (!myRoster) {
@@ -115,44 +219,7 @@ export async function getDraftStatus({ leagueId, sleeperUserId }) {
     .filter((pick) => pick.roster_id === myRosterId)
     .map(({ pick_no, round, player }) => ({ pick_no, round, player }));
 
-  // Never fetches over the network — pulls from the already-loaded/refreshed
-  // in-memory cache, so this respects Sleeper's once-a-day guidance no
-  // matter how many times draft_status is called during a draft.
-  const draftedPlayerIds = new Set(allPlayerIds);
-  const players = await getCachedPlayers();
-
-  const byPosition = {};
-  for (const position of FANTASY_POSITIONS) byPosition[position] = [];
-
-  for (const [playerId, p] of Object.entries(players)) {
-    if (draftedPlayerIds.has(playerId)) continue;
-    if (!p.team) continue;
-    if (!FANTASY_POSITIONS.includes(p.position)) continue;
-    byPosition[p.position].push({
-      player_id: playerId,
-      name: playerName(p),
-      team: p.team,
-      search_rank: p.search_rank ?? Infinity,
-    });
-  }
-
-  const remainingPlayersByPosition = {};
-  for (const position of FANTASY_POSITIONS) {
-    const list = byPosition[position];
-    list.sort((a, b) => a.search_rank - b.search_rank);
-    remainingPlayersByPosition[position] = {
-      count: list.length,
-      // Sleeper's search_rank is a general search-relevance field (lower =
-      // more prominent in Sleeper's own search/UI), not a curated fantasy
-      // ranking or ADP — named explicitly so callers don't mistake this
-      // for "best available."
-      search_rank_reference: list.slice(0, TOP_N_PER_POSITION).map(({ player_id, name, team }) => ({
-        player_id,
-        name,
-        team,
-      })),
-    };
-  }
+  const remainingPlayersByPosition = await computeRemainingPlayersByPosition(allPlayerIds);
 
   return {
     draft_id: draftId,
@@ -163,6 +230,9 @@ export async function getDraftStatus({ leagueId, sleeperUserId }) {
     my_next_pick_number: myNextPickNumber,
     picks_so_far: picksSoFar,
     my_picks_so_far: myPicksSoFar,
-    remaining_players_by_position: remainingPlayersByPosition,
+    fallback_mode: false,
+    remaining_players_by_position:
+      remainingPlayersByPosition ??
+      "The local player database hasn't loaded yet, so undrafted-player counts/rankings aren't available this call — everything else above is still live.",
   };
 }
