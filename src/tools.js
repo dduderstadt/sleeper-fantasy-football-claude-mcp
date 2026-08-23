@@ -13,6 +13,7 @@ import {
 } from './sleeperClient.js';
 import { resolvePlayers } from './playerCache.js';
 import { getDraftStatus } from './draftStatus.js';
+import { getRosterNeeds } from './rosterNeeds.js';
 
 function jsonResult(data) {
   return {
@@ -287,5 +288,21 @@ export function registerTools(server, { leagueId, sleeperUserId }) {
         'closest signal available from Sleeper\'s raw player data).',
     },
     async () => jsonResult(await getDraftStatus({ leagueId, sleeperUserId }))
+  );
+
+  server.registerTool(
+    'roster_needs',
+    {
+      title: 'Roster Needs',
+      description:
+        'In-season roster construction check for the configured league and user. Assigns your rostered ' +
+        'players to your starting slots (dedicated positions first, then FLEX, then SUPER_FLEX, so no ' +
+        "player is double-counted against more than one slot) and reports each slot's fill_status: " +
+        '"solid" (filled, no injury flag), "questionable" (filled, but that player has a non-null Sleeper ' +
+        'injury_status), or "empty" (no eligible rostered player left to fill it — a real roster gap). ' +
+        "This is about roster construction only — it never judges whether a player is actually good; " +
+        "that's left to you.",
+    },
+    async () => jsonResult(await getRosterNeeds({ leagueId, sleeperUserId }))
   );
 }
