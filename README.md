@@ -241,6 +241,11 @@ This server uses the **Streamable HTTP** transport (a single `/mcp` endpoint, no
 - Most tools are raw pass-throughs of Sleeper's API (aside from `get_league_settings`'s light field selection); `draft_status` and `roster_needs` are the bundled/derived tools so far — see [above](#draft_status).
 - No fantasy rankings/ADP/projections anywhere — Sleeper's raw API doesn't provide them, and `draft_status`'s `search_rank_reference` is explicitly a rough proxy (Sleeper's own search-relevance field), not draft advice. Real rankings would need a separate data source and aren't integrated.
 
+## Skills folder
+ 
+`skills/` holds the `SKILL.md` files (`draft-round-advice`, `draft-grade`, `game-week`) that use this server's tools. These are kept here for version history alongside the server they depend on, but **this folder is not connected to Claude in any way** — editing a file here does nothing on its own. Any time a skill file changes, manually re-upload it in Claude's Settings → Skills to make the update live. It's easy to edit the file here, forget the re-upload step, and end up testing against a stale version — as happened once already with `draft-round-advice`.
+
+
 ## License
 
 None
