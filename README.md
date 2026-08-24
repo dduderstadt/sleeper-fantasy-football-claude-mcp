@@ -76,7 +76,7 @@ Missing or incorrect tokens get a `401` before any MCP or Sleeper logic runs (`s
 
 ## Available tools
 
-All tools are scoped to the league configured via `SLEEPER_LEAGUE_ID` — none take a league ID as an argument. Each is a thin, direct pass-through of Sleeper's raw JSON response for the corresponding endpoint (see [Sleeper's API docs](https://docs.sleeper.com/)) — no reshaping applied, except `get_league_settings`, which narrows the response to the fields most relevant for draft/season prep.
+All tools are scoped to the league configured via `SLEEPER_LEAGUE_ID` — none take a league ID as an argument. Each is a thin, direct pass-through of Sleeper's raw JSON response for the corresponding endpoint (see [Sleeper's API docs](https://docs.sleeper.com/)) — no reshaping applied, except `get_league_settings`, which narrows the response to the fields most relevant for draft/season prep: `league_id`, `name`, `season`, `status`, `sport`, `settings`, `scoring_settings` (point values for every stat category — passed through unmodified), `roster_positions`, and `draft_id`.
 
 | Tool | Sleeper endpoint | Arguments |
 |---|---|---|

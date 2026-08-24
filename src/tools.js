@@ -53,7 +53,7 @@ export function registerTools(server, { leagueId, sleeperUserId }) {
     {
       title: 'Get League Settings',
       description:
-        "Fetches the configured Sleeper league's settings, roster positions, status, and current draft_id. " +
+        "Fetches the configured Sleeper league's settings, scoring_settings, roster positions, status, and current draft_id. " +
         'The draft_id changes every season and is always read live from Sleeper, never cached.',
     },
     async () => {
@@ -66,6 +66,7 @@ export function registerTools(server, { leagueId, sleeperUserId }) {
         status: league.status,
         sport: league.sport,
         settings: league.settings,
+        scoring_settings: league.scoring_settings,
         roster_positions: league.roster_positions,
         draft_id: league.draft_id,
       };
