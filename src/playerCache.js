@@ -148,10 +148,9 @@ function resolveOne(rawPlayerId) {
 
   const p = players[playerId];
   if (p) {
-    const name = p.full_name || [p.first_name, p.last_name].filter(Boolean).join(' ') || null;
     return {
       player_id: playerId,
-      name,
+      name: playerName(p),
       position: p.position ?? null,
       team: p.team ?? null,
       status: p.status ?? null,
@@ -197,6 +196,40 @@ export async function resolvePlayers(idOrIds) {
 export async function getCachedPlayers() {
   if (readyPromise) await readyPromise;
   return players;
+}
+
+/**
+ * Resolves an array of player *names* (not IDs) against the cache —
+ * exact, case-insensitive match only, no fuzzy matching. Used by
+ * get_watchlist, which stores names in watchlist.json rather than
+ * player_ids since that's what a human maintaining the file would
+ * actually write. Builds the name index fresh each call (a single pass
+ * over the same in-memory data draft_status already scans per call), so
+ * there's nothing to keep in sync when the cache refreshes.
+ *
+ * A name with no match returns { resolved: false, ... nulls } rather than
+ * throwing, so one typo in a long watchlist doesn't fail the whole call.
+ * If two players share a display name (rare), the first one found wins —
+ * not worth resolving more precisely for a manually-curated watchlist.
+ */
+export async function resolvePlayersByName(names) {
+  if (readyPromise) await readyPromise;
+
+  const nameIndex = new Map();
+  for (const [playerId, p] of Object.entries(players)) {
+    const name = playerName(p);
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (!nameIndex.has(key)) nameIndex.set(key, playerId);
+  }
+
+  return names.map((requestedName) => {
+    const playerId = nameIndex.get(requestedName.toLowerCase());
+    if (!playerId) {
+      return { requested_name: requestedName, resolved: false, player_id: null, name: null, position: null, team: null };
+    }
+    return { requested_name: requestedName, resolved: true, ...resolveOne(playerId) };
+  });
 }
 
 /**
