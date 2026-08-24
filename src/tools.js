@@ -14,6 +14,7 @@ import {
 import { resolvePlayers } from './playerCache.js';
 import { getDraftStatus } from './draftStatus.js';
 import { getRosterNeeds } from './rosterNeeds.js';
+import { getWatchlist } from './watchlist.js';
 
 function jsonResult(data) {
   return {
@@ -305,5 +306,20 @@ export function registerTools(server, { leagueId, sleeperUserId }) {
         "that's left to you.",
     },
     async () => jsonResult(await getRosterNeeds({ leagueId, sleeperUserId }))
+  );
+
+  server.registerTool(
+    'get_watchlist',
+    {
+      title: 'Get Watchlist',
+      description:
+        'Reads the manually-maintained watchlist of player names from data/watchlist.json and resolves ' +
+        'each one against the player database, returning { requested_name, resolved, player_id, name, ' +
+        'position, team, status, injury_status, years_exp, fantasy_positions } per entry — position is ' +
+        'included so results can be filtered by position group. A name with no match in the player ' +
+        'database is returned with resolved: false rather than failing the whole call. This is not a ' +
+        'Sleeper API call — see the README for how to update watchlist.json.',
+    },
+    async () => jsonResult(await getWatchlist())
   );
 }

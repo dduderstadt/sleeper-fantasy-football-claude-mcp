@@ -18,10 +18,12 @@ src/
   flexEligibility.js  # shared slot/flex-eligibility + assignment logic
   draftStatus.js      # draft_status: snake-order/trade math + player pool scan
   rosterNeeds.js      # roster_needs: starting-slot fill status via flexEligibility.js
+  watchlist.js        # get_watchlist: reads data/watchlist.json, resolves names via playerCache.js
   auth.js             # bearer token middleware
   tools.js            # MCP tool definitions (registered against an McpServer)
   server.js           # express app: /health, /mcp, auth wiring, listen()
 .env.example          # example .env file structure with placeholder values
+data/watchlist.json   # manually-maintained player watchlist -- see Available tools below
 ```
 
 Adding a new tool means: add a fetch function to `sleeperClient.js`, register a tool in `tools.js` that calls it. `server.js` and `auth.js` don't need to change.
@@ -92,6 +94,7 @@ All tools are scoped to the league configured via `SLEEPER_LEAGUE_ID` — none t
 | `get_trending` | `GET /players/nfl/trending/<type>` | `type` (`"add"` or `"drop"`), `lookback_hours` (number, optional), `limit` (number, optional), `resolve_players` (boolean, optional), `exclude_rostered` (boolean, optional) |
 | `draft_status` | *(bundled — see below)* | — |
 | `roster_needs` | *(bundled — see below)* | — |
+| `get_watchlist` | *(local file, not Sleeper — see below)* | — |
 
 `draft_id` is never configured statically — Sleeper issues a new one each season, so call `get_league_settings` first and pass its `draft_id` into the draft-scoped tools.
 
@@ -130,6 +133,20 @@ Returns `slots`: an array in your league's declared `roster_positions` order (be
 - `player` — that slot's assigned player (`{ player_id, name, position, team, injury_status }`), or `null` if empty
 
 Plus a `summary` with `solid`/`questionable`/`empty` counts. This is about roster **construction** only — whether a slot has an eligible, healthy player at all — not a judgment about whether that player is any good; that's left to you.
+
+### get_watchlist
+
+A bundled, no-argument tool that reads `data/watchlist.json` — a manually-maintained JSON array of player name strings — and resolves each one against the player database (`src/watchlist.js`). Unlike every other tool here, this doesn't call Sleeper's API at all; it's a local file read plus a name lookup against the same in-memory player cache `resolve_players` and `draft_status` already use.
+
+Returns an array with one entry per name in the file:
+
+- `requested_name` — exactly what was in `watchlist.json`
+- `resolved` — `true`/`false`
+- `player_id`, `name`, `position`, `team`, `status`, `injury_status`, `years_exp`, `fantasy_positions` — populated if resolved, all `null` if not
+
+Matching is exact and case-insensitive — no fuzzy matching. A name with no match in the player database comes back with `resolved: false` rather than failing the whole call, so one typo in a long watchlist doesn't break it. `position` is included specifically so results can be filtered by position group (e.g. for round-by-round draft advice) without a second lookup.
+
+**Updating your watchlist:** edit `data/watchlist.json` (a plain JSON array of name strings), commit, and push — Railway redeploys automatically and picks up the new file. This is a manual, infrequent update — expected to change mainly before draft day, not something with hot-reloading, so a change won't take effect until the next deploy. It ships with a single placeholder entry (`"Example Player Name"`, which will show up as `resolved: false` until you replace it) — swap in your real list before relying on this tool.
 
 ## Error handling & graceful degradation
 
