@@ -15,6 +15,7 @@ import { resolvePlayers } from './playerCache.js';
 import { getDraftStatus } from './draftStatus.js';
 import { getRosterNeeds } from './rosterNeeds.js';
 import { getWatchlist } from './watchlist.js';
+import { getRecentPerformance } from './recentPerformance.js';
 
 function jsonResult(data) {
   return {
@@ -321,5 +322,38 @@ export function registerTools(server, { leagueId, sleeperUserId }) {
         'Sleeper API call — see the README for how to update watchlist.json.',
     },
     async () => jsonResult(await getWatchlist())
+  );
+
+  server.registerTool(
+    'get_recent_performance',
+    {
+      title: 'Get Recent Performance',
+      description:
+        'Fetches recent actual game performance for a batch of players -- computed fantasy points (using ' +
+        "the configured league's real scoring_settings) plus raw usage indicators (targets, carries, " +
+        'receptions, snaps/snap_pct where present), so rostered players can be checked for utilization and ' +
+        "production rather than just roster/draft structure. Pulls Sleeper's weekly stats endpoint once per " +
+        'completed week, never once per player -- at most 4 Sleeper calls total no matter how many ' +
+        'player_ids are passed. Only completed weeks are included (never the current in-progress week, ' +
+        "since its stats aren't final); a bye week within the lookback window is flagged bye: true instead " +
+        "of a misleading 0, and a week with no data at all for a player (hasn't debuted, not yet on a " +
+        'roster) is simply omitted rather than shown as a fabricated zero. Returns raw per-week data only -- ' +
+        'no trend judgment is computed here, that\'s left to the caller.',
+      inputSchema: {
+        player_ids: z
+          .array(z.string())
+          .min(1)
+          .describe('Player IDs to check -- an entire roster at once is the expected use, batched efficiently'),
+        weeks_back: z
+          .number()
+          .int()
+          .positive()
+          .max(4)
+          .optional()
+          .describe('How many recent COMPLETED weeks to pull. Default 4, hard max 4.'),
+      },
+    },
+    async ({ player_ids, weeks_back }) =>
+      jsonResult(await getRecentPerformance({ leagueId, playerIds: player_ids, weeksBack: weeks_back }))
   );
 }
