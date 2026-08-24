@@ -1,3 +1,4 @@
+import cors from 'cors';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
@@ -5,6 +6,7 @@ import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js
 import { config } from './config.js';
 import { bearerAuth } from './auth.js';
 import { registerTools } from './tools.js';
+import { initPlayerCache } from './playerCache.js';
 
 function buildMcpServer() {
   const server = new McpServer({
@@ -12,7 +14,7 @@ function buildMcpServer() {
     version: '1.0.0',
   });
 
-  registerTools(server, { leagueId: config.sleeperLeagueId });
+  registerTools(server, { leagueId: config.sleeperLeagueId, sleeperUserId: config.sleeperUserId });
 
   return server;
 }
@@ -23,9 +25,33 @@ function buildMcpServer() {
 // below is the real access control for this server.
 const app = createMcpExpressApp({ host: '0.0.0.0' });
 
+// Fired and not awaited: /health and the rest of the app must come up
+// immediately for Railway's health check, regardless of how long the
+// ~5MB player database takes to fetch. Tools that need it await
+// resolvePlayers(), which itself awaits this same initial load.
+initPlayerCache();
+
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
+
+// CORS must run before auth: a browser-based MCP client (e.g. claude.ai
+// itself, connecting from the browser rather than server-side) sends an
+// OPTIONS preflight with no Authorization header, so bearerAuth would
+// reject it with 401 before the browser ever got to send the real
+// request. `cors()` answers the preflight itself and short-circuits
+// before reaching bearerAuth below. Origin is wide open (`*`) because
+// the bearer token, not same-origin cookies, is what actually protects
+// this endpoint.
+app.use(
+  '/mcp',
+  cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id', 'Mcp-Protocol-Version'],
+    exposedHeaders: ['Mcp-Session-Id'],
+  })
+);
 
 app.use('/mcp', bearerAuth(config.mcpAuthToken));
 
