@@ -209,12 +209,16 @@ export async function getCachedPlayers() {
  *
  * A name with no match returns { resolved: false, ... nulls } rather than
  * throwing, so one typo in a long watchlist doesn't fail the whole call.
- * If two players share a display name (happens more than you'd expect —
- * e.g. an active starter and a long-retired/inactive player with the same
- * name), the Active one wins; between two ties on that, the first one
- * found wins. Not worth resolving more precisely (e.g. by position) for a
- * manually-curated watchlist — this is enough to stop a well-known active
- * player from silently losing a name collision to an obscure inactive one.
+ * If two players share a display name (happens more than you'd expect),
+ * the one with the lower (more prominent) Sleeper search_rank wins — the
+ * same signal fallback rankings and draft_status already use to mean
+ * "which of these is the real, relevant player." status alone isn't
+ * enough: confirmed via direct investigation that Sleeper can have two
+ * records both marked status "Active" for the same name (one a genuine
+ * current player, the other an obscure one Sleeper hasn't marked inactive
+ * in that field) — search_rank reliably told them apart (e.g. 18 vs.
+ * 9999999) where status could not. Not worth resolving more precisely
+ * (e.g. by position) for a manually-curated watchlist beyond this.
  */
 export async function resolvePlayersByName(names) {
   if (readyPromise) await readyPromise;
@@ -230,8 +234,9 @@ export async function resolvePlayersByName(names) {
       nameIndex.set(key, playerId);
       continue;
     }
-    const existingIsActive = players[existingId]?.status === 'Active';
-    if (!existingIsActive && p.status === 'Active') {
+    const existingRank = players[existingId]?.search_rank ?? Infinity;
+    const candidateRank = p.search_rank ?? Infinity;
+    if (candidateRank < existingRank) {
       nameIndex.set(key, playerId);
     }
   }

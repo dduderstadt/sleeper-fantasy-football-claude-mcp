@@ -12,16 +12,17 @@ Working end to end over Streamable HTTP with bearer token auth, deployed to Rail
 
 ```
 src/
-  config.js           # reads env vars once, exports a typed config object
-  sleeperClient.js    # thin wrapper around Sleeper's REST API; every call gets a timeout + clear error
-  playerCache.js      # in-memory NFL player_id -> name/position/team lookup + search_rank fallback rankings
-  flexEligibility.js  # shared slot/flex-eligibility + assignment logic
-  draftStatus.js      # draft_status: snake-order/trade math + player pool scan
-  rosterNeeds.js      # roster_needs: starting-slot fill status via flexEligibility.js
-  watchlist.js        # get_watchlist: reads data/watchlist.json, resolves names via playerCache.js
-  auth.js             # bearer token middleware
-  tools.js            # MCP tool definitions (registered against an McpServer)
-  server.js           # express app: /health, /mcp, auth wiring, listen()
+  config.js             # reads env vars once, exports a typed config object
+  sleeperClient.js      # thin wrapper around Sleeper's REST API; every call gets a timeout + clear error
+  playerCache.js        # in-memory NFL player_id -> name/position/team lookup + search_rank fallback rankings
+  flexEligibility.js    # shared slot/flex-eligibility + assignment logic
+  draftStatus.js        # draft_status: snake-order/trade math + player pool scan
+  rosterNeeds.js        # roster_needs: starting-slot fill status via flexEligibility.js
+  watchlist.js          # get_watchlist: reads data/watchlist.json, resolves names via playerCache.js
+  recentPerformance.js  # get_recent_performance: weekly stats -> fantasy points via scoring_settings + usage
+  auth.js               # bearer token middleware
+  tools.js              # MCP tool definitions (registered against an McpServer)
+  server.js             # express app: /health, /mcp, auth wiring, listen()
 .env.example          # example .env file structure with placeholder values
 data/watchlist.json   # manually-maintained player watchlist -- see Available tools below
 ```
@@ -95,6 +96,7 @@ All tools are scoped to the league configured via `SLEEPER_LEAGUE_ID` — none t
 | `draft_status` | *(bundled — see below)* | — |
 | `roster_needs` | *(bundled — see below)* | — |
 | `get_watchlist` | *(local file, not Sleeper — see below)* | — |
+| `get_recent_performance` | *(bundled — see below)* | `player_ids` (string array), `weeks_back` (number, optional, default 4, hard max 4) |
 
 `draft_id` is never configured statically — Sleeper issues a new one each season, so call `get_league_settings` first and pass its `draft_id` into the draft-scoped tools.
 
@@ -147,6 +149,22 @@ Returns an array with one entry per name in the file:
 Matching is exact and case-insensitive — no fuzzy matching. A name with no match in the player database comes back with `resolved: false` rather than failing the whole call, so one typo in a long watchlist doesn't break it. `position` is included specifically so results can be filtered by position group (e.g. for round-by-round draft advice) without a second lookup.
 
 **Updating your watchlist:** edit `data/watchlist.json` (a plain JSON array of name strings), commit, and push — Railway redeploys automatically and picks up the new file. This is a manual, infrequent update — expected to change mainly before draft day, not something with hot-reloading, so a change won't take effect until the next deploy. It ships with a single placeholder entry (`"Example Player Name"`, which will show up as `resolved: false` until you replace it) — swap in your real list before relying on this tool.
+
+### get_recent_performance
+
+A bundled tool (`src/recentPerformance.js`) for evaluating actual recent game performance — the only tool here that touches real game stats rather than roster/draft structure, useful for checking whether rostered players are actually being utilized/producing. Takes `player_ids` (an array of Sleeper player IDs — a full roster's worth at once is the expected use) and an optional `weeks_back` (default 4, hard max 4).
+
+1. Reads the current season/week/`season_type` (`GET /state/nfl`) and the league's real `scoring_settings` (`GET /league/<league_id>`), fetched fresh and in parallel.
+2. Only ever includes **completed regular-season** weeks — the current in-progress week is never included, since its stats aren't final yet, and nothing is included at all unless `season_type` is `"regular"`. Sleeper's `week` field counts differently outside the regular season (e.g. preseason weeks during `season_type: "pre"`), and those numbers don't correspond to anything on the regular-season stats endpoint — so outside the regular season this always returns `weeks: []` for every player, by design, not a bug. If fewer than `weeks_back` completed weeks exist so far in the regular season (e.g. it's week 2), you get however many are actually available, down to zero in week 1.
+3. Fetches Sleeper's weekly stats (`GET /stats/nfl/regular/<season>/<week>`) **once per completed week, not once per player** — at most 4 Sleeper calls total no matter how many `player_ids` are passed.
+4. Computes each player's fantasy points per week by summing every stat category in the league's `scoring_settings` against that week's raw stats for that player (`points += scoring_settings[stat] * raw_stats[stat]` for every key present in both) — this generically follows whatever scoring the league actually uses rather than hardcoding PPR/standard math.
+5. Also surfaces raw usage indicators when Sleeper's response includes them: `targets`, `carries`, `receptions`, `snaps`, and `snap_pct` (snap share, computed from the player's snap count over the team's total offensive snaps that week).
+6. A bye week within the lookback window is flagged `{ week, bye: true }` instead of a misleading 0 — inferred by checking whether *any* player on that team has stats for that week at all (Sleeper's stats endpoint has no explicit bye flag), not from a separate schedule lookup. That inference only runs once a week's response actually has data for at least 20 of the league's 32 teams (a real bye week only ever affects a handful of teams at once) — a sparser response means the week's data didn't load correctly for some other reason, and is treated as no data at all rather than mislabeled as a mass bye. (This is exactly the failure mode hit and fixed during initial verification: calling the regular-season endpoint with preseason week numbers returned empty responses, which the original bye heuristic misread as every team being on a bye.)
+7. A week with no data at all for a player (not yet on a roster, hasn't debuted, etc.) is simply omitted from that player's `weeks` array rather than shown as a fabricated zero.
+
+Returns an array with one entry per requested `player_id`: `{ player_id, name, position, team, weeks }`, where `weeks` is `[{ week, fantasy_points, usage: { targets?, carries?, receptions?, snaps?, snap_pct? } }, ...]` (or `{ week, bye: true }` for a bye week). No trend judgment (improving/declining) is computed here — that's left to whatever calls this tool.
+
+**Caveat on stat key names:** the mapping from Sleeper's raw weekly stat keys to `targets`/`carries`/`receptions`/`snaps` (`rec_tgt`, `rush_att`, `rec`, `off_snp`/`tm_off_snp`) is based on documented/observed Sleeper stat category names, not yet verified against a live regular-season response — this sandbox can't reach `api.sleeper.app`, and the season is still in preseason as of this writing. The fantasy-points computation doesn't depend on this mapping (it sums directly against whatever keys `scoring_settings` itself uses), so scoring should be correct regardless; only the usage indicators are at risk if Sleeper's real key names differ. Worth a real `get_recent_performance` call once the regular season starts to confirm both line up.
 
 ## Error handling & graceful degradation
 
@@ -238,7 +256,7 @@ This server uses the **Streamable HTTP** transport (a single `/mcp` endpoint, no
 - Read-only — this cannot modify anything in your Sleeper league.
 - Single league per deployment (`SLEEPER_LEAGUE_ID` is one value in config, not a tool argument).
 - Stateless request handling — each MCP request spins up its own transport, so there's no server-side session state to lose on a Railway restart, but also no resumable streaming across requests.
-- Most tools are raw pass-throughs of Sleeper's API (aside from `get_league_settings`'s light field selection); `draft_status` and `roster_needs` are the bundled/derived tools so far — see [above](#draft_status).
+- Most tools are raw pass-throughs of Sleeper's API (aside from `get_league_settings`'s light field selection); `draft_status`, `roster_needs`, and `get_recent_performance` are the bundled/derived tools so far — see [above](#draft_status).
 - No fantasy rankings/ADP/projections anywhere — Sleeper's raw API doesn't provide them, and `draft_status`'s `search_rank_reference` is explicitly a rough proxy (Sleeper's own search-relevance field), not draft advice. Real rankings would need a separate data source and aren't integrated.
 
 ## Skills folder
