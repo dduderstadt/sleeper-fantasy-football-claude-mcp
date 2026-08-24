@@ -1,46 +1,43 @@
-# Refactor Plan
+# TypeScript Refactor Roadmap — Sleeper MCP Server
 
-## Phase 0 — Scaffolding
+The project splits into small, focused files already, which makes this an easy migration: convert the simplest files first, then work up to the files that depend on them.
 
-[] Add typescript, tsx (or ts-node) and @types/express, @types/cors as devDependencies.
+## Phase 0 — Setup
 
-[] tsconfig.json: strict: true, module: NodeNext, target: ES2022 (matches your Node 24 pin), outDir: dist.
+- [ ] Add TypeScript and dev tools to the project
+- [ ] Add a `tsconfig.json` (project settings) with strict type-checking turned on
+- [ ] Update build/run scripts so `npm run build` compiles TS to JS, and `npm start` runs the compiled output
+- [ ] Update Railway's build step to run the compile before starting the server
+- [ ] Ignore the compiled output folder in git
 
-[] Update package.json: main: dist/server.js, build: tsc, start: node dist/server.js, dev: tsx watch src/server.ts.
+## Phase 1 — Define the shared shapes
 
-[] Railway build command becomes npm run build && npm start. Add dist/ to .gitignore.
+- [ ] Create one file listing the core data shapes used across the app (a player, a roster slot, a draft result, a performance week, etc.)
+- [ ] Make the draft status result explicit about its two modes (normal vs. fallback) so the rest of the code can't accidentally mix them up
 
-## Phase 1 — Shared types first
-Create src/types.ts with the domain shapes the README already implies:
+## Phase 2 — Convert the simplest files first
 
-[] ResolvedPlayer (player_id, name, position, team, status, injury_status, years_exp, fantasy_positions)
+- [ ] Convert the config file (reads environment variables)
+- [ ] Convert the flex-eligibility file (roster slot logic)
+- [ ] Convert the Sleeper API client (the file every network call goes through)
+- [ ] Make sure the API client returns typed data instead of untyped, so mistakes get caught automatically later
 
-[] RosterSlot, FillStatus ("solid" | "questionable" | "empty")
+## Phase 3 — Convert the data-processing files
 
-[] DraftStatusResult as a discriminated union on fallback_mode: true | false — this is the single biggest type-safety win in the whole repo, since it forces every consumer to null-check the right fields instead of trusting a loose object.
+- [ ] Convert the player cache
+- [ ] Convert the watchlist reader
+- [ ] Convert the recent-performance calculator
+- [ ] Convert the roster-needs checker
+- [ ] Convert the draft-status bundler
 
-[] PerformanceWeek (as a union: normal week vs. { week, bye: true })
+## Phase 4 — Convert the entry points
 
-[] Config (the shape config.js currently returns)
+- [ ] Convert the auth/security check
+- [ ] Convert the tool definitions (the part Claude actually calls) — reuse the existing validation rules so the types and the validation can't drift apart
+- [ ] Convert the main server file last, since it ties everything else together
 
-## Phase 2 — Convert leaf modules (no internal deps)
-In order: config.js → config.ts, flexEligibility.js → flexEligibility.ts, sleeperClient.js → sleeperClient.ts. sleeperClient is worth doing carefully — make sleeperFetch<T>() generic so every caller gets a typed return instead of any, and type the three distinct error cases (timeout / network / non-2xx) as a small union or tagged error classes.
+## Phase 5 — Polish
 
-## Phase 3 — Data-shaping modules
-[] playerCache.ts, watchlist.ts, recentPerformance.ts, rosterNeeds.ts, draftStatus.ts — these now import typed functions from Phase 2, so the compiler starts doing real work catching mismatches (e.g. anywhere a raw player_id string leaked into a spot expecting ResolvedPlayer).
-
-## Phase 4 — Entry points
-
-[] auth.ts: type the Express middleware as (req: Request, res: Response, next: NextFunction) => void.
-
-[] tools.ts: define each tool’s zod schema once and derive its arg type with z.infer<typeof schema> instead of hand-writing a parallel TS type — one source of truth for validation and typing.
-
-[] server.ts last, since it just wires everything else together.
-
-## Phase 5 — Tighten up
-
-[] Turn on noUncheckedIndexedAccess (catches the player_id string lookups against the player-cache map).
-
-[] Add eslint + typescript-eslint.
-
-[] Update the README’s project-structure block and “adding a new tool” instructions to say .ts.
+- [ ] Turn on stricter checks for unsafe lookups (e.g. looking up a player that might not exist)
+- [ ] Add a linter for consistent style and catching common mistakes
+- [ ] Update the README's file list and instructions to reflect the new file extensions
