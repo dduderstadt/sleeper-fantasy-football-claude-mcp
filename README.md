@@ -12,16 +12,16 @@ Working end to end over Streamable HTTP with bearer token auth, deployed to Rail
 
 ```
 src/
-  config.js         # reads env vars once, exports a typed config object
-  sleeperClient.js   # thin wrapper around Sleeper's REST API; every call gets a timeout + clear error
+  config.js           # reads env vars once, exports a typed config object
+  sleeperClient.js    # thin wrapper around Sleeper's REST API; every call gets a timeout + clear error
   playerCache.js      # in-memory NFL player_id -> name/position/team lookup + search_rank fallback rankings
-  flexEligibility.js    # shared slot/flex-eligibility + assignment logic
-  draftStatus.js       # draft_status: snake-order/trade math + player pool scan
-  rosterNeeds.js         # roster_needs: starting-slot fill status via flexEligibility.js
-  auth.js            # bearer token middleware
-  tools.js           # MCP tool definitions (registered against an McpServer)
-  server.js          # express app: /health, /mcp, auth wiring, listen()
-.env.example         # example .env file structure with placeholder values
+  flexEligibility.js  # shared slot/flex-eligibility + assignment logic
+  draftStatus.js      # draft_status: snake-order/trade math + player pool scan
+  rosterNeeds.js      # roster_needs: starting-slot fill status via flexEligibility.js
+  auth.js             # bearer token middleware
+  tools.js            # MCP tool definitions (registered against an McpServer)
+  server.js           # express app: /health, /mcp, auth wiring, listen()
+.env.example          # example .env file structure with placeholder values
 ```
 
 Adding a new tool means: add a fetch function to `sleeperClient.js`, register a tool in `tools.js` that calls it. `server.js` and `auth.js` don't need to change.
@@ -158,8 +158,8 @@ To verify: set `SIMULATE_SLEEPER_OUTAGE`, redeploy, call `draft_status`, confirm
 
 ```bash
 npm install
-cp .env.example .env   # then fill in real values
-npm start               # or: npm run dev (auto-restarts on changes)
+cp .env.example .env  # then fill in real values
+npm start             # or: npm run dev (auto-restarts on changes)
 ```
 
 The server listens on `http://localhost:3000` (or `$PORT` if set).
@@ -226,4 +226,4 @@ This server uses the **Streamable HTTP** transport (a single `/mcp` endpoint, no
 
 ## License
 
-MIT
+None
