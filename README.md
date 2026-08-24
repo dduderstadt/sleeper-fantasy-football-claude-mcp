@@ -12,12 +12,12 @@ This is the initial scaffold: one tool, `get_league_settings`, working end to en
 
 ```
 src/
-  config.js         # reads env vars once, exports a typed config object
-  sleeperClient.js   # thin wrapper around Sleeper's REST API
-  auth.js            # bearer token middleware
-  tools.js           # MCP tool definitions (registered against an McpServer)
-  server.js          # express app: /health, /mcp, auth wiring, listen()
-.env.example
+  config.js           # reads env vars once, exports a typed config object
+  sleeperClient.js    # thin wrapper around Sleeper's REST API
+  auth.js             # bearer token middleware
+  tools.js            # MCP tool definitions (registered against an McpServer)
+  server.js           # express app: /health, /mcp, auth wiring, listen()
+.env.example          # example .env file structure with kvp
 ```
 
 Adding a new tool means: add a fetch function to `sleeperClient.js`, register a tool in `tools.js` that calls it. `server.js` and `auth.js` don't need to change.
@@ -124,4 +124,4 @@ This server uses the **Streamable HTTP** transport (a single `/mcp` endpoint, no
 
 ## License
 
-MIT
+None
