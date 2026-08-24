@@ -141,6 +141,19 @@ The goal: if something breaks mid-draft — Sleeper's API, your network, or Rail
 - **Fallback rankings, derived automatically — no file to maintain.** Every time `playerCache.js` successfully refreshes the player database (startup, then ~every 24h), it also computes a fallback ranking snapshot from that same data: the top 100 players overall by Sleeper's `search_rank`, plus the top 5 per position. A failed refresh never overwrites this with empty data — the last good snapshot keeps serving. Always labeled by `search_rank` explicitly wherever it's used (`draft_status`'s fallback mode currently), since it's Sleeper's own rough search-relevance signal, not a curated fantasy ranking.
 - **`draft_status` degrades field-by-field**, not all-or-nothing — see [above](#draft_status) for exactly which fields go `null` in fallback mode and why.
 
+### Manually verifying fallback mode
+
+There's no way to make Sleeper's real API fail on command, so `src/sleeperClient.js` has a manual verification switch — **not a real feature, not part of normal configuration** (it's not in `config.js` or `.env.example`). Set the `SIMULATE_SLEEPER_OUTAGE` environment variable (to any value) in Railway's Variables tab and redeploy/restart:
+
+- `getRosters`, `getDraft`, `getDraftPicks`, and `getDraftTradedPicks` throw instantly (no network call at all) — exactly the batch `draft_status` depends on for live pick data.
+- `getLeague` and `getPlayers` are untouched, so `get_league_settings` still succeeds and the player cache keeps working normally.
+
+That combination is what makes `draft_status` land in genuine `fallback_mode: true` rather than the hard top-level error it throws when `get_league_settings` itself fails (no `draft_id` means nothing can be computed at all — see [above](#draft_status)).
+
+**While the flag is set**, `get_rosters`, `get_draft_picks`, and `get_draft_traded_picks` will also show the simulated error, since they call the same underlying functions directly — expected for a short verification window, not something to leave on.
+
+To verify: set `SIMULATE_SLEEPER_OUTAGE`, redeploy, call `draft_status`, confirm the response shows `fallback_mode: true`, a `fallback_reason` mentioning the simulated outage, `generally_strong_players_overall`/`generally_strong_players_by_position` populated from the real cached player data, and every field in `unavailable_fields` set to `null`. **Then remove the variable and redeploy again before relying on this for an actual draft** — nothing about this switch is meant to survive past the verification.
+
 ## Running locally
 
 ```bash
