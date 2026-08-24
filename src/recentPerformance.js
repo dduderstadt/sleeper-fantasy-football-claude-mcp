@@ -4,6 +4,14 @@ import { resolvePlayers, getCachedPlayers } from './playerCache.js';
 const MAX_WEEKS_BACK = 4;
 const DEFAULT_WEEKS_BACK = 4;
 
+// A genuinely completed week has stats for the vast majority of the
+// league's 32 teams -- a real bye week affects only a handful at once.
+// Fewer than this many teams represented means the response didn't
+// actually carry real data for that week (stats not posted yet, wrong
+// week number for the season type, etc.), not "everyone's on bye" --
+// see computeByeTeams().
+const MIN_TEAMS_FOR_VALID_WEEK = 20;
+
 // Best-known mapping from Sleeper's raw weekly stat keys (GET
 // /stats/nfl/regular/<season>/<week>) to the usage indicators this tool
 // surfaces. Sleeper doesn't publish a fixed schema for these, and this
@@ -48,20 +56,25 @@ function extractUsage(rawStats) {
   return usage;
 }
 
+function teamsWithDataInWeek(weekStats, players) {
+  const teams = new Set();
+  for (const playerId of Object.keys(weekStats)) {
+    const team = players[playerId]?.team;
+    if (team) teams.add(team);
+  }
+  return teams;
+}
+
 /**
  * A team with zero players appearing anywhere in a given week's stats
  * response is presumed to have been on a bye that week. Sleeper's stats
  * endpoint has no explicit bye flag, so this infers it from the same
  * response rather than a separate schedule lookup -- cheap since the full
- * player cache is already in memory.
+ * player cache is already in memory. Only call this once teamsWithData has
+ * already cleared MIN_TEAMS_FOR_VALID_WEEK -- otherwise "nobody has data"
+ * (a bad/empty week response) gets misread as "everybody's on bye."
  */
-function computeByeTeams(weekStats, players) {
-  const teamsWithData = new Set();
-  for (const playerId of Object.keys(weekStats)) {
-    const team = players[playerId]?.team;
-    if (team) teamsWithData.add(team);
-  }
-
+function computeByeTeams(teamsWithData, players) {
   const byeTeams = new Set();
   for (const p of Object.values(players)) {
     if (p.team && !teamsWithData.has(p.team)) byeTeams.add(p.team);
@@ -79,10 +92,11 @@ function computeByeTeams(weekStats, players) {
  * Only completed weeks are ever included; the current in-progress week's
  * stats aren't final and are always excluded. If fewer than weeksBack
  * completed weeks exist yet this season, whatever is actually available is
- * returned instead (down to zero for week 1). A week with genuinely no
- * data for a player (not yet on a roster, hasn't debuted) is simply
- * omitted from that player's weeks array rather than shown as a
- * fabricated zero; a bye week is flagged explicitly instead.
+ * returned instead (down to zero for week 1, and always zero outside
+ * season_type "regular" -- see below). A week with genuinely no data for a
+ * player (not yet on a roster, hasn't debuted) is simply omitted from that
+ * player's weeks array rather than shown as a fabricated zero; a bye week
+ * is flagged explicitly instead.
  */
 export async function getRecentPerformance({ leagueId, playerIds, weeksBack = DEFAULT_WEEKS_BACK }) {
   const clampedWeeksBack = Math.min(weeksBack, MAX_WEEKS_BACK);
@@ -92,11 +106,21 @@ export async function getRecentPerformance({ leagueId, playerIds, weeksBack = DE
   const season = state.season;
   const currentWeek = state.week ?? 0;
 
+  // /stats/nfl/regular/<season>/<week> only has real data once the regular
+  // season is underway. During preseason (season_type "pre"), state.week
+  // counts preseason weeks, not regular season ones, so those numbers
+  // don't correspond to anything on the regular-season stats endpoint at
+  // all -- querying it anyway returns an empty response for every team,
+  // not "everyone's on bye." Outside season_type "regular", there are no
+  // completed regular-season weeks to report, so this returns zero rather
+  // than calling the endpoint with numbers that don't apply to it.
   const completedWeeks = [];
-  for (let w = currentWeek - 1; w >= 1 && completedWeeks.length < clampedWeeksBack; w--) {
-    completedWeeks.push(w);
+  if (state.season_type === 'regular') {
+    for (let w = currentWeek - 1; w >= 1 && completedWeeks.length < clampedWeeksBack; w--) {
+      completedWeeks.push(w);
+    }
+    completedWeeks.reverse();
   }
-  completedWeeks.reverse();
 
   const statsByWeek = new Map();
   if (completedWeeks.length > 0) {
@@ -105,9 +129,13 @@ export async function getRecentPerformance({ leagueId, playerIds, weeksBack = DE
   }
 
   const players = await getCachedPlayers();
+
+  // null for a week means its response didn't clear MIN_TEAMS_FOR_VALID_WEEK
+  // -- treated as "no usable data for this week," never as bye evidence.
   const byeTeamsByWeek = new Map();
   for (const week of completedWeeks) {
-    byeTeamsByWeek.set(week, computeByeTeams(statsByWeek.get(week), players));
+    const teamsWithData = teamsWithDataInWeek(statsByWeek.get(week), players);
+    byeTeamsByWeek.set(week, teamsWithData.size >= MIN_TEAMS_FOR_VALID_WEEK ? computeByeTeams(teamsWithData, players) : null);
   }
 
   const resolved = await resolvePlayers(playerIds);
@@ -124,8 +152,11 @@ export async function getRecentPerformance({ leagueId, playerIds, weeksBack = DE
           fantasy_points: computeFantasyPoints(raw, scoringSettings),
           usage: extractUsage(raw),
         });
-      } else if (info.team && byeTeamsByWeek.get(week).has(info.team)) {
-        weeks.push({ week, bye: true });
+      } else {
+        const byeTeams = byeTeamsByWeek.get(week);
+        if (byeTeams && info.team && byeTeams.has(info.team)) {
+          weeks.push({ week, bye: true });
+        }
       }
     }
 
