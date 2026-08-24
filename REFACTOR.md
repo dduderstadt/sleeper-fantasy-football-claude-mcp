@@ -2,8 +2,9 @@
 
 ## Phase 0 — Scaffolding
 
-[ ] Add typescript, tsx (or ts-node) and @types/express, @types/cors as devDependencies.
-[ ] tsconfig.json: strict: true, module: NodeNext, target: ES2022 (matches your Node 24 pin), outDir: dist.
+[] Add typescript, tsx (or ts-node) and @types/express, @types/cors as devDependencies.
+
+[] tsconfig.json: strict: true, module: NodeNext, target: ES2022 (matches your Node 24 pin), outDir: dist.
 [] Update package.json: main: dist/server.js, build: tsc, start: node dist/server.js, dev: tsx watch src/server.ts.
 [] Railway build command becomes npm run build && npm start. Add dist/ to .gitignore.
 
