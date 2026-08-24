@@ -41,3 +41,14 @@ The project splits into small, focused files already, which makes this an easy m
 - [ ] Turn on stricter checks for unsafe lookups (e.g. looking up a player that might not exist)
 - [ ] Add a linter for consistent style and catching common mistakes
 - [ ] Update the README's file list and instructions to reflect the new file extensions
+
+## Phase 6 — Beyond TypeScript
+
+- [ ] Add automated tests for the trickiest logic (snake-order math, roster slot assignment) — ideally before/alongside the TS conversion, so refactor mistakes get caught
+- [ ] Fix the license mismatch — `package.json` says MIT, GitHub page says None; add a real `LICENSE` file or drop the field
+- [ ] Add a basic CI workflow (GitHub Actions) to run type-checking, lint, and tests on every push
+- [ ] Review logging — move from plain `console.log`/`console.error` to structured logs if not already, so a mid-draft failure is easy to debug
+- [ ] Add basic request logging around the auth check, to notice if the bearer token leaks and gets used elsewhere
+- [ ] Add validation for the watchlist JSON file so a typo or bad syntax fails clearly instead of breaking the whole tool
+- [ ] Verify the `get_recent_performance` stat-key mapping against a live regular-season response once the season starts
+- [ ] Turn on Dependabot or run `npm audit` periodically, since this server is exposed to the internet
