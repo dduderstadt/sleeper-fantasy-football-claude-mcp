@@ -209,8 +209,12 @@ export async function getCachedPlayers() {
  *
  * A name with no match returns { resolved: false, ... nulls } rather than
  * throwing, so one typo in a long watchlist doesn't fail the whole call.
- * If two players share a display name (rare), the first one found wins —
- * not worth resolving more precisely for a manually-curated watchlist.
+ * If two players share a display name (happens more than you'd expect —
+ * e.g. an active starter and a long-retired/inactive player with the same
+ * name), the Active one wins; between two ties on that, the first one
+ * found wins. Not worth resolving more precisely (e.g. by position) for a
+ * manually-curated watchlist — this is enough to stop a well-known active
+ * player from silently losing a name collision to an obscure inactive one.
  */
 export async function resolvePlayersByName(names) {
   if (readyPromise) await readyPromise;
@@ -220,7 +224,16 @@ export async function resolvePlayersByName(names) {
     const name = playerName(p);
     if (!name) continue;
     const key = name.toLowerCase();
-    if (!nameIndex.has(key)) nameIndex.set(key, playerId);
+
+    const existingId = nameIndex.get(key);
+    if (!existingId) {
+      nameIndex.set(key, playerId);
+      continue;
+    }
+    const existingIsActive = players[existingId]?.status === 'Active';
+    if (!existingIsActive && p.status === 'Active') {
+      nameIndex.set(key, playerId);
+    }
   }
 
   return names.map((requestedName) => {
