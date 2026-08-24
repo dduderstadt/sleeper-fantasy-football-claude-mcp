@@ -12,12 +12,16 @@ Working end to end over Streamable HTTP with bearer token auth, deployed to Rail
 
 ```
 src/
-  config.js           # reads env vars once, exports a typed config object
-  sleeperClient.js    # thin wrapper around Sleeper's REST API
-  auth.js             # bearer token middleware
-  tools.js            # MCP tool definitions (registered against an McpServer)
-  server.js           # express app: /health, /mcp, auth wiring, listen()
-.env.example          # example .env file structure with kvp
+  config.js         # reads env vars once, exports a typed config object
+  sleeperClient.js   # thin wrapper around Sleeper's REST API; every call gets a timeout + clear error
+  playerCache.js      # in-memory NFL player_id -> name/position/team lookup + search_rank fallback rankings
+  flexEligibility.js    # shared slot/flex-eligibility + assignment logic
+  draftStatus.js       # draft_status: snake-order/trade math + player pool scan
+  rosterNeeds.js         # roster_needs: starting-slot fill status via flexEligibility.js
+  auth.js            # bearer token middleware
+  tools.js           # MCP tool definitions (registered against an McpServer)
+  server.js          # express app: /health, /mcp, auth wiring, listen()
+.env.example         # example .env file structure with placeholder values
 ```
 
 Adding a new tool means: add a fetch function to `sleeperClient.js`, register a tool in `tools.js` that calls it. `server.js` and `auth.js` don't need to change.
@@ -197,6 +201,21 @@ This server uses the **Streamable HTTP** transport (a single `/mcp` endpoint, no
 6. Deploy. Railway will give you a public domain like `https://<service>.up.railway.app`. Your MCP endpoint is `https://<service>.up.railway.app/mcp`.
 7. Verify with the same curl commands as above, swapping `localhost:3000` for your Railway domain, then point Claude Desktop / mobile at that URL with your `MCP_AUTH_TOKEN`.
 
+## Maintenance
+
+**Rotating `MCP_AUTH_TOKEN`:** do this any time the token might have leaked (pasted somewhere it shouldn't have been, shared, etc.) — it's the only thing protecting your league data on the open internet.
+
+1. Generate a new one: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+2. Railway → service → **Variables** → update `MCP_AUTH_TOKEN` to the new value. Railway redeploys/restarts automatically.
+3. Update every client that connects to this server (claude.ai custom connector, any local `.env` you test against) with the new token — the old one stops working the moment Railway picks up the change.
+4. Verify with a quick `tools/call` (e.g. `get_league_settings`) using the new token before considering it done.
+
+**Updating for a new season:** Sleeper issues a new `SLEEPER_LEAGUE_ID` each season (linked to the prior one via `previous_league_id` in Sleeper's own data, not anything this server tracks). When your league rolls over:
+
+1. Find the new league ID the same way as [Prerequisites](#prerequisites) describes — open the new season's league in the Sleeper app, copy the numeric ID from the URL.
+2. Railway → service → **Variables** → update `SLEEPER_LEAGUE_ID` to the new value and redeploy.
+3. No code changes needed, and nothing else to update — `draft_id` is always read live from `get_league_settings` (never cached or configured separately), and every tool re-derives everything else (rosters, draft, players) from the league ID at request time.
+
 ## Limitations
 
 - Read-only — this cannot modify anything in your Sleeper league.
@@ -207,4 +226,4 @@ This server uses the **Streamable HTTP** transport (a single `/mcp` endpoint, no
 
 ## License
 
-None
+MIT
