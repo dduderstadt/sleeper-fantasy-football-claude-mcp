@@ -116,6 +116,17 @@ export function getPlayers() {
   return sleeperFetch('/players/nfl', { timeoutMs: 30_000 });
 }
 
+/**
+ * Fetches every player's raw stat line for one completed NFL week (regular
+ * season), keyed by player_id. Used by get_recent_performance to compute
+ * fantasy points from the league's own scoring_settings rather than trust
+ * any pre-computed score. One call per week, never per player — see
+ * recentPerformance.js for how results get batched across players.
+ */
+export function getWeekStats(season, week) {
+  return sleeperFetch(`/stats/nfl/regular/${season}/${week}`);
+}
+
 export function getTrending(type, lookbackHours, limit) {
   const params = new URLSearchParams();
   if (lookbackHours !== undefined) params.set('lookback_hours', String(lookbackHours));
