@@ -11,7 +11,7 @@ import {
   getDraftTradedPicks,
   getTrending,
 } from './sleeperClient.js';
-import { resolvePlayers, getCachedPlayers } from './playerCache.js';
+import { resolvePlayers } from './playerCache.js';
 import { getDraftStatus } from './draftStatus.js';
 import { getRosterNeeds } from './rosterNeeds.js';
 import { getWatchlist } from './watchlist.js';
@@ -321,44 +321,5 @@ export function registerTools(server, { leagueId, sleeperUserId }) {
         'Sleeper API call — see the README for how to update watchlist.json.',
     },
     async () => jsonResult(await getWatchlist())
-  );
-
-  // TEMPORARY DIAGNOSTIC TOOL — not part of normal usage, will be removed in
-  // a follow-up PR once the Kenneth Walker investigation is done. Dumps raw,
-  // unfiltered Sleeper player records (substring name search and/or direct
-  // player_id lookup) to see exactly what Sleeper's database contains,
-  // rather than the shaped output every other tool returns.
-  server.registerTool(
-    'debug_search_players',
-    {
-      title: 'DEBUG: Search Players (temporary)',
-      description:
-        'TEMPORARY diagnostic tool. Substring-searches the player database by name (case-insensitive) ' +
-        'and/or looks up a specific player_id directly, returning raw unfiltered Sleeper player records.',
-      inputSchema: {
-        query: z.string().optional().describe('Case-insensitive substring to search for in player names'),
-        player_id: z.string().optional().describe('Exact player_id to look up directly'),
-      },
-    },
-    async ({ query, player_id }) => {
-      const players = await getCachedPlayers();
-      const result = {};
-
-      if (player_id) {
-        result.by_id = players[player_id] ?? null;
-      }
-
-      if (query) {
-        const q = query.toLowerCase();
-        result.matches = Object.entries(players)
-          .filter(([, p]) => {
-            const name = p.full_name || [p.first_name, p.last_name].filter(Boolean).join(' ');
-            return name && name.toLowerCase().includes(q);
-          })
-          .map(([id, p]) => ({ player_id: id, ...p }));
-      }
-
-      return jsonResult(result);
-    }
   );
 }
