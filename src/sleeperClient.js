@@ -2,6 +2,22 @@ const SLEEPER_API_BASE = 'https://api.sleeper.app/v1';
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
+ * Manual verification switch, not a real feature — set the
+ * SIMULATE_SLEEPER_OUTAGE env var (to anything) on Railway to make
+ * simulateOutageIfEnabled()'s callers fail instantly and deterministically,
+ * without touching the network at all. Used to prove draft_status's
+ * fallback_mode actually engages, rather than trusting it compiles.
+ * Remove the env var (and redeploy/restart) to go back to normal — nothing
+ * else in the codebase reads this variable, and it isn't part of normal
+ * configuration (not in config.js or .env.example).
+ */
+function simulateOutageIfEnabled(label) {
+  if (process.env.SIMULATE_SLEEPER_OUTAGE) {
+    throw new Error(`Simulated Sleeper outage for ${label} (SIMULATE_SLEEPER_OUTAGE is set — remove it to restore normal operation)`);
+  }
+}
+
+/**
  * Every Sleeper call in this codebase goes through here, so every one of
  * them gets the same treatment: a hard timeout (a hung connection would
  * otherwise hang the calling tool indefinitely — MCP's SDK already turns a
@@ -44,6 +60,7 @@ export function getLeague(leagueId) {
 }
 
 export function getRosters(leagueId) {
+  simulateOutageIfEnabled('getRosters');
   return sleeperFetch(`/league/${leagueId}/rosters`);
 }
 
@@ -74,14 +91,17 @@ export function getNflState() {
  * to compute pick order.
  */
 export function getDraft(draftId) {
+  simulateOutageIfEnabled('getDraft');
   return sleeperFetch(`/draft/${draftId}`);
 }
 
 export function getDraftPicks(draftId) {
+  simulateOutageIfEnabled('getDraftPicks');
   return sleeperFetch(`/draft/${draftId}/picks`);
 }
 
 export function getDraftTradedPicks(draftId) {
+  simulateOutageIfEnabled('getDraftTradedPicks');
   return sleeperFetch(`/draft/${draftId}/traded_picks`);
 }
 
